@@ -70,6 +70,7 @@ process fastqcAnalyze {
     """
 }
 
+
 // If the user does not specify a path to their own index, the program will do it.
 process indexReference {
     container 'biocontainers/bwa:v0.7.17_cv1'
@@ -86,7 +87,6 @@ process indexReference {
     bwa index $reference
     """
 }
-
 
 
 process mappingSequence {
@@ -129,12 +129,11 @@ process convertationOfMapping {
 
 
 process faidxIReference {
-    container "biocontainers/samtools:v1.9-4-deb_cv1"
+    container "broadinstitute/gatk:latest"
     containerOptions '--user $(id -u):$(id -g)'
     
     input:
       path reference
-      path convert
       
     output:
       path "*"
@@ -142,7 +141,7 @@ process faidxIReference {
     script:
     """
     samtools faidx $reference
-    samtools index $convert
+    gatk CreateSequenceDictionary -R $reference -O GRCh38.p14.genome.dict
     """
 }
 
@@ -164,13 +163,13 @@ process deduplicationAndRecalibration {
     
     script:
     """
+    samtools index $convert
     gatk AddOrReplaceReadGroups -I $convert -O alignmentSortRg.bam -RGID "Sample1_L1" -RGSM "Sample1" -RGPL "ILLUMINA" -RGLB "Lib1" -RGPU "L001"
     gatk MarkDuplicates -I alignmentSortRg.bam -O alignmentSortRgMarked.bam --METRICS_FILE duplicates_metrics.txt
     samtools index alignmentSortRgMarked.bam
-    gatk CreateSequenceDictionary -R $reference -O GRCh38.p14.genome.dict
     gatk IndexFeatureFile -I $sites
     gatk BaseRecalibrator -I alignmentSortRgMarked.bam -R $reference --known-sites $sites -L $bed_file -O data.table
-    gatk ApplyBQSR -I alignmentSortRgMarked.bam -R $reference --bqsr-recal-file data.table --allow-missing-read-group -O alignmentSortRgMarkedQual.bam
+    gatk ApplyBQSR -I alignmentSortRgMarked.bam -R $reference --bqsr-recal-file data.table -O alignmentSortRgMarkedQual.bam
     rm alignmentSortRg.bam alignmentSortRgMarked.bam
     """   
 }
@@ -191,9 +190,7 @@ process variantCalling {
       path "*.vcf"
     
     script:
-    """
-    gatk CreateSequenceDictionary -R $reference -O GRCh38.p14.genome.dict
-    
+    """    
     gatk HaplotypeCaller -R $reference -I $align -O results.vcf -L $bed_file
     gatk SelectVariants -R $reference -V results.vcf -select-type SNP -O raw_snps.vcf
     gatk SelectVariants -R $reference -V results.vcf -select-type INDEL -O raw_indels.vcf
@@ -216,13 +213,20 @@ workflow {
     bed_file = file(params.bed)
     
     
-    
-    
     fastqc_analyze = fastqcAnalyze(reads)
-    index = indexReference(reference)
+    
+    
+    if (!params.index) {
+      index = indexReference(reference)
+    }
+    else {
+      index = Channel.fromPath(params.index)
+    }
+    
+    
     alignment = mappingSequence(reference, reads, index)
     convert = convertationOfMapping(alignment)
-    dop_indexes = faidxIReference(reference, convert)
+    dop_indexes = faidxIReference(reference)
     extra_proc = deduplicationAndRecalibration(convert, reference, sites, dop_indexes, bed_file)
     variant_calling = variantCalling(reference, extra_proc, bed_file, dop_indexes)
     
