@@ -50,8 +50,6 @@ def checkParams() {
 checkParams()
 
 
-
-
 // Make quality analyze of sequence
 process fastqcAnalyze {
     publishDir "${params.output}/QC", pattern: '*.{html,zip}', mode: 'copy'
@@ -66,7 +64,8 @@ process fastqcAnalyze {
     
     script:
     """
-    fastqc -o . "$reads"
+    ls -lh
+    fastqc -o . $reads
     """
 }
 
@@ -207,7 +206,7 @@ process variantCalling {
 
 
 workflow {
-    reads = Channel.fromPath(params.input)
+    reads = Channel.fromPath(params.input).collect()
     reference = file(params.reference)
     sites = file(params.dbsnp)
     bed_file = file(params.bed)
@@ -220,9 +219,10 @@ workflow {
       index = indexReference(reference)
     }
     else {
-      index = Channel.fromPath(params.index)
+      index = Channel.fromPath("${params.index}/*").collect()
     }
     
+
     
     alignment = mappingSequence(reference, reads, index)
     convert = convertationOfMapping(alignment)
