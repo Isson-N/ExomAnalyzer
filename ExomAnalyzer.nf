@@ -70,6 +70,24 @@ process fastqcAnalyze {
 }
 
 
+process multiqcAnalyze {
+    publishDir "${params.output}/QC", mode: 'copy'
+    container 'multiqc/multiqc:latest'
+    containerOptions '--user $(id -u):$(id -g)'
+    
+    input:
+    path qual
+    
+    output:
+    path "*.{html}"
+    
+    script:
+    """
+    multiqc .
+    """
+}
+
+
 // If the user does not specify a path to their own index, the program will do it.
 process indexReference {
     container 'biocontainers/bwa:v0.7.17_cv1'
@@ -123,6 +141,42 @@ process convertationOfMapping {
     script:
     """
     samtools view -bS "$alignment" | samtools sort -o alignmentSort.bam
+    """
+}
+
+
+process alignmentQC {
+    publishDir "${params.output}/Converted", mode: 'copy'
+    container "broadinstitute/gatk:latest"
+    containerOptions '--user $(id -u):$(id -g)'
+
+    input:
+      path converted
+      
+    output:
+      path "*"
+      
+    script:
+    """
+    samtools stats $converted > stats.txt
+    """
+}
+
+process coverageQC {
+    publishDir "${params.output}/Converted", mode: 'copy'
+    container "gfanz/mosdepth:latest"
+    containerOptions '--user $(id -u):$(id -g)'
+
+    input:
+      path converted
+      path bed_file
+      
+    output:
+      path "*"
+      
+    script:
+    """
+    mosdepth -b $bed_file -n sample alignmentSort $converted
     """
 }
 
@@ -213,6 +267,7 @@ workflow {
     
     
     fastqc_analyze = fastqcAnalyze(reads)
+    multiqc_analyze = multiqcAnalyze(fastqc_analyze)
     
     
     if (!params.index) {
@@ -222,10 +277,14 @@ workflow {
       index = Channel.fromPath("${params.index}/*").collect()
     }
     
-
     
     alignment = mappingSequence(reference, reads, index)
     convert = convertationOfMapping(alignment)
+    
+    
+    alignment_qc = alignmentQC(convert)
+    coverage_qc = coverageQC(convert, bed_file)
+    
     dop_indexes = faidxIReference(reference)
     extra_proc = deduplicationAndRecalibration(convert, reference, sites, dop_indexes, bed_file)
     variant_calling = variantCalling(reference, extra_proc, bed_file, dop_indexes)
