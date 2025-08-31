@@ -51,9 +51,9 @@ checkParams()
 
 
 // Make quality analyze of sequence
-process fastqcAnalyze {
+process readsQualityAnalyze {
     publishDir "${params.output}/QC", pattern: '*.{html,zip}', mode: 'copy'
-    container 'biocontainers/fastqc:v0.11.9_cv8'
+    container 'issonn/quality-analysis:latest'
     containerOptions '--user $(id -u):$(id -g)'
     
     input:
@@ -66,31 +66,14 @@ process fastqcAnalyze {
     """
     ls -lh
     fastqc -o . $reads
-    """
-}
-
-
-process multiqcAnalyze {
-    publishDir "${params.output}/QC", mode: 'copy'
-    container 'multiqc/multiqc:latest'
-    containerOptions '--user $(id -u):$(id -g)'
-    
-    input:
-    path qual
-    
-    output:
-    path "*.{html}"
-    
-    script:
-    """
-    multiqc .
+    multiqc . --filename multiqc_reads_report
     """
 }
 
 
 // If the user does not specify a path to their own index, the program will do it.
 process indexReference {
-    container 'biocontainers/bwa:v0.7.17_cv1'
+    container 'issonn/bwa-samtools:latest'
     containerOptions '--user $(id -u):$(id -g)'
     
     input:
@@ -107,8 +90,8 @@ process indexReference {
 
 
 process mappingSequence {
-    publishDir "${params.output}/Alignment", mode: 'copy'
-    container 'biocontainers/bwa:v0.7.17_cv1'
+    publishDir "${params.output}/Alignment", mode: 'symlink'
+    container 'issonn/bwa-samtools:latest'
     containerOptions '--user $(id -u):$(id -g)'
     
     input:
@@ -117,54 +100,21 @@ process mappingSequence {
     path index
     
     output:
-    path "*.sam"
+    path "*.bam"
     
     script:
     """
     bwa mem $reference $reads > output.sam
+    samtools view -bS output.sam | samtools sort -o alignmentSort.bam
+    rm output.sam
     """
 
-}
-
-
-process convertationOfMapping {
-    publishDir "${params.output}/Converted", mode: 'copy'
-    container "biocontainers/samtools:v1.9-4-deb_cv1"
-    containerOptions '--user $(id -u):$(id -g)'
-
-    input:
-      path alignment
-      
-    output:
-      path "*"
-      
-    script:
-    """
-    samtools view -bS "$alignment" | samtools sort -o alignmentSort.bam
-    """
 }
 
 
 process alignmentQC {
-    publishDir "${params.output}/Converted", mode: 'copy'
-    container "broadinstitute/gatk:latest"
-    containerOptions '--user $(id -u):$(id -g)'
-
-    input:
-      path converted
-      
-    output:
-      path "*"
-      
-    script:
-    """
-    samtools stats $converted > stats.txt
-    """
-}
-
-process coverageQC {
-    publishDir "${params.output}/Converted", mode: 'copy'
-    container "gfanz/mosdepth:latest"
+    publishDir "${params.output}/QC", mode: 'copy'
+    container "issonn/quality-analysis:latest"
     containerOptions '--user $(id -u):$(id -g)'
 
     input:
@@ -176,7 +126,12 @@ process coverageQC {
       
     script:
     """
-    mosdepth -b $bed_file -n sample alignmentSort $converted
+    samtools stats $converted > stats.txt
+    plot-bamstats -p plots-bamstats/ stats.txt
+    
+    mosdepth -t 8 -b $bed_file -n sample1 $converted
+    
+    multiqc . --filename multiqc_alignment_report
     """
 }
 
@@ -266,8 +221,8 @@ workflow {
     bed_file = file(params.bed)
     
     
-    fastqc_analyze = fastqcAnalyze(reads)
-    multiqc_analyze = multiqcAnalyze(fastqc_analyze)
+    fastqc_analyze = readsQualityAnalyze(reads) 
+    dop_indexes = faidxIReference(reference)
     
     
     if (!params.index) {
@@ -279,14 +234,12 @@ workflow {
     
     
     alignment = mappingSequence(reference, reads, index)
-    convert = convertationOfMapping(alignment)
     
     
-    alignment_qc = alignmentQC(convert)
-    coverage_qc = coverageQC(convert, bed_file)
+    alignment_qc = alignmentQC(alignment, bed_file)
+
     
-    dop_indexes = faidxIReference(reference)
-    extra_proc = deduplicationAndRecalibration(convert, reference, sites, dop_indexes, bed_file)
+    extra_proc = deduplicationAndRecalibration(alignment, reference, sites, dop_indexes, bed_file)
     variant_calling = variantCalling(reference, extra_proc, bed_file, dop_indexes)
     
 }
