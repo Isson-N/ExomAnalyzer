@@ -52,7 +52,6 @@ checkParams()
 
 // Make quality analyze of sequence
 process readsQualityAnalyze {
-    publishDir "${params.output}/QC", pattern: '*.{html,zip}', mode: 'copy'
     container 'biocontainers/fastqc:v0.11.9_cv8'
     containerOptions '--user $(id -u):$(id -g)'
     
@@ -111,7 +110,6 @@ process mappingSequence {
 
 
 process alignmentQC {
-    publishDir "${params.output}/QC", mode: 'copy'
     container "issonn/quality-analysis:latest"
     containerOptions '--user $(id -u):$(id -g)'
 
@@ -163,7 +161,8 @@ process deduplicationAndRecalibration {
       path bed_file
     
     output:
-      path "*.bam"
+      path "*.bam", emit: next
+      path "!(*.bam)", emit: analyze
     
     script:
     """
@@ -191,7 +190,8 @@ process variantCalling {
       path dop_indexes
       
     output:
-      path "*.vcf"
+      path "*.vcf", emit: next
+      path "!(*.vcf)", emit: analyze
     
     script:
     """    
@@ -218,6 +218,8 @@ process finalQC {
     input:
       path fastqc
       path from_algn
+      path extra
+      path variant
       
     output:
       path "*"
@@ -254,10 +256,10 @@ workflow {
     alignment_qc = alignmentQC(alignment, bed_file)
 
     
-    extra_proc = deduplicationAndRecalibration(alignment, reference, sites, dop_indexes, bed_file)
-    variant_calling = variantCalling(reference, extra_proc, bed_file, dop_indexes)
+    extra_proc = deduplicationAndRecalibration(alignment, reference, sites, dop_indexes, bed_file).out.next
+    variant_calling = variantCalling(reference, extra_proc, bed_file, dop_indexes).out.next
     
     
-    final_qc = finalQC(fastqc_analyze, alignment_qc)
+    final_qc = finalQC(fastqc_analyze, alignment_qc, extra_proc, variant_calling)
 }
 
