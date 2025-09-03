@@ -53,20 +53,18 @@ checkParams()
 // Make quality analyze of sequence
 process readsQualityAnalyze {
     publishDir "${params.output}/QC", pattern: '*.{html,zip}', mode: 'copy'
-    container 'issonn/quality-analysis:latest'
+    container 'biocontainers/fastqc:v0.11.9_cv8'
     containerOptions '--user $(id -u):$(id -g)'
     
     input:
     path reads
     
     output:
-    path "*.{html,zip}"
+    path "*"
     
     script:
     """
-    ls -lh
     fastqc -o . $reads
-    multiqc . --filename multiqc_reads_report
     """
 }
 
@@ -127,11 +125,9 @@ process alignmentQC {
     script:
     """
     samtools stats $converted > stats.txt
-    plot-bamstats -p plots-bamstats/ stats.txt
     
+    samtools index $converted
     mosdepth -t 8 -b $bed_file -n sample1 $converted
-    
-    multiqc . --filename multiqc_alignment_report
     """
 }
 
@@ -214,6 +210,25 @@ process variantCalling {
 }
 
 
+process finalQC {
+    publishDir "${params.output}/QC", mode: 'copy'
+    container "multiqc/multiqc:latest"
+    containerOptions '--user $(id -u):$(id -g)'
+
+    input:
+      path fastqc
+      path from_algn
+      
+    output:
+      path "*"
+      
+    script:
+    """
+    multiqc . --filename final_report
+    """
+}
+
+
 workflow {
     reads = Channel.fromPath(params.input).collect()
     reference = file(params.reference)
@@ -242,5 +257,7 @@ workflow {
     extra_proc = deduplicationAndRecalibration(alignment, reference, sites, dop_indexes, bed_file)
     variant_calling = variantCalling(reference, extra_proc, bed_file, dop_indexes)
     
+    
+    final_qc = finalQC(fastqc_analyze, alignment_qc)
 }
 
