@@ -162,7 +162,7 @@ process deduplicationAndRecalibration {
     
     output:
       path "*.bam", emit: next
-      path "!(*.bam)", emit: analyze
+      path "*.{txt, table, grp}", emit: analyze
     
     script:
     """
@@ -179,7 +179,7 @@ process deduplicationAndRecalibration {
 
 
 process variantCalling {
-    publishDir "${params.output}/VCF", mode: 'copy'
+    publishDir "${params.output}/VCF", mode: 'copy', pattern: '*.vcf'
     container "broadinstitute/gatk:latest"
     containerOptions '--user $(id -u):$(id -g)'
     
@@ -190,8 +190,7 @@ process variantCalling {
       path dop_indexes
       
     output:
-      path "*.vcf", emit: next
-      path "!(*.vcf)", emit: analyze
+      path "*.vcf"
     
     script:
     """    
@@ -219,7 +218,6 @@ process finalQC {
       path fastqc
       path from_algn
       path extra
-      path variant
       
     output:
       path "*"
@@ -256,10 +254,10 @@ workflow {
     alignment_qc = alignmentQC(alignment, bed_file)
 
     
-    extra_proc = deduplicationAndRecalibration(alignment, reference, sites, dop_indexes, bed_file).out.next
-    variant_calling = variantCalling(reference, extra_proc, bed_file, dop_indexes).out.next
+    extra_proc = deduplicationAndRecalibration(alignment, reference, sites, dop_indexes, bed_file)
+    variant_calling = variantCalling(reference, extra_proc.next, bed_file, dop_indexes)
     
     
-    final_qc = finalQC(fastqc_analyze, alignment_qc, extra_proc, variant_calling)
+    final_qc = finalQC(fastqc_analyze, alignment_qc, extra_proc.analyze)
 }
 
